@@ -1,104 +1,76 @@
-// public/main.js
+import './ui.js'; // UI 初期化とスクロール処理
 
-// DOM 要素の取得
-const playBtn   = document.getElementById('play');     // 再生開始ボタン
-const pauseBtn  = document.getElementById('pause');    // ポーズ／再開ボタン
-const toggleChk = document.getElementById('toggle');   // ループ切り替えチェックボックス
-const volSlider = document.getElementById('volume');   // ボリュームスライダー
+const startButton = document.getElementById('start-button');
+const pauseBtn    = document.getElementById('pause');
+const volumeSlider= document.getElementById('volume');
+let audioCtx, gainNode, workletNode;
+const THRESHOLD = 2000, GAP = 100;
+let prevZone = 'before';
 
-// AudioContext と GainNode を格納する変数
-let audioCtx;
-let gainNode;
+const windAudio = new Audio('/audio/wind.mp3');
+windAudio.loop = false;
 
-// 再生開始ボタンがクリックされた時の処理
-playBtn.addEventListener('click', async () => {
-  // 1. AudioContext の生成 (サンプルレート指定あり)
-  audioCtx = new AudioContext({ sampleRate: 44100 });
+startButton.addEventListener('click', async () => {
+  // モーダル閉じてスクロール有効化
+  document.getElementById('start-modal').style.display = 'none';
+  // html と body の両方でスクロールを有効化
+  document.documentElement.style.overflowY = 'auto';
+  document.body.style.overflowY = 'auto';
 
-  // 2. GainNode を作成し初期音量をスライダー値に設定
+  audioCtx = new AudioContext({ sampleRate:44100 });
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = parseFloat(volSlider.value);
-
-  // 3. Worklet モジュールの登録
-  //   ring-buffer-processor.js に定義した AudioWorkletProcessor を追加
+  gainNode.gain.value = parseFloat(volumeSlider.value);
   await audioCtx.audioWorklet.addModule('ring-buffer-processor.js');
 
-  // 4. 音声ファイルのフェッチ、デコード、無音トリミング
-  const urls = ['/audio/01.mp3', '/audio/02.mp3'];
-  // 並列で fetch -> ArrayBuffer
-  const arrayBuffers = await Promise.all(
-    urls.map(u =>
-      fetch(u)
-        .then(res => { if (!res.ok) throw new Error(res.status); return res.arrayBuffer(); })
-    )
-  );
-  // ArrayBuffer -> AudioBuffer にデコード
-  const audioBuffers = await Promise.all(
-    arrayBuffers.map(ab => audioCtx.decodeAudioData(ab))
-  );
-  // 閾値 (thr = 1e-4) 未満の先頭・末尾の無音部分を削除
-  const trimBuffer = buf => {
-    const ch0 = buf.getChannelData(0);
-    const thr = 1e-4;
-    let start = 0, end = ch0.length;
-    // 先頭無音をスキップ
-    while (start < ch0.length && Math.abs(ch0[start]) <= thr) start++;
-    // 末尾無音をスキップ
-    while (end > 0 && Math.abs(ch0[end - 1]) <= thr) end--;
-    // 各チャンネルごとにサブアレイを抽出
-    return Array.from({ length: buf.numberOfChannels }, (_, ch) =>
-      new Float32Array(buf.getChannelData(ch).subarray(start, end))
-    );
+  // 音声読み込み
+  const urls = ['/audio/01.mp3','/audio/02.mp3'];
+  const abufs = await Promise.all(urls.map(u => fetch(u).then(r=>r.arrayBuffer())));
+  const audioBuffers = await Promise.all(abufs.map(ab=>audioCtx.decodeAudioData(ab)));
+
+  // 無音トリム
+  const trim = buf => {
+    const ch0 = buf.getChannelData(0), thr=1e-4; let s=0, e=ch0.length;
+    while(s<e && Math.abs(ch0[s])<=thr) s++;
+    while(e>0 && Math.abs(ch0[e-1])<=thr) e--;
+    return Array.from({length:buf.numberOfChannels},(_,ch)=>buf.getChannelData(ch).subarray(s,e));
   };
-  const channelDataList = audioBuffers.map(trimBuffer);
+  const channelDataList = audioBuffers.map(trim);
 
-  // 5. AudioWorkletNode の生成と接続設定
-  const node = new AudioWorkletNode(audioCtx, 'loop-processor', {
-    outputChannelCount: [audioBuffers[0].numberOfChannels]
-  });
-  // Worklet 側にチャンネルデータと初期モード (mode=false: 01ループ) を送信
-  node.port.postMessage({ channelDataList, mode: false });
-  // ノード接続: Processor -> GainNode -> 出力
-  node.connect(gainNode).connect(audioCtx.destination);
+  // Worklet ノード
+  workletNode = new AudioWorkletNode(audioCtx,'loop-processor',{outputChannelCount:[audioBuffers[0].numberOfChannels]});
+  workletNode.port.postMessage({channelDataList,mode:false});
+  workletNode.connect(gainNode).connect(audioCtx.destination);
 
-  // 6. チェックボックス変更時にモード切り替えメッセージを送信
-  toggleChk.addEventListener('change', e => {
-    node.port.postMessage({ mode: e.target.checked });
-  });
+  // スクロール検知→mode切替
+  window.addEventListener('scroll',()=>{
+    const y=window.scrollY;
+    const zone = y<THRESHOLD-GAP?'before':y>THRESHOLD+GAP?'after':'crossing';
 
-  // 7. ボリュームスライダー操作時の処理
-  //   再生中・再生前いずれも GainNode のゲインをリアルタイム更新
-  volSlider.addEventListener('input', e => {
-    if (gainNode) {
-      gainNode.gain.value = parseFloat(e.target.value);
+    if (zone === 'crossing' && prevZone !== 'crossing') {
+      windAudio.currentTime = 0;
+      windAudio.play().catch(()=>{});
     }
+    // before/after に入ったタイミングで常に mode フラグを同期
+    if (zone !== 'crossing' && zone !== prevZone) {
+      workletNode.port.postMessage({ mode: (zone === 'after') });
+    }
+    prevZone=zone;
+  },{passive:true});
+
+  // 音量制御
+  volumeSlider.addEventListener('input',e=>{gainNode.gain.value=parseFloat(e.target.value);});
+
+  // ポーズ/再開
+  pauseBtn.disabled=false;
+  pauseBtn.addEventListener('click',async ()=>{
+    if(audioCtx.state==='running'){await audioCtx.suspend(); pauseBtn.textContent='▶️ 再開';}
+    else {await audioCtx.resume(); pauseBtn.textContent='⏸️ ポーズ';}
   });
 
-  // 8. 再生開始: AudioContext を動作状態に
+  // 終了通知
+  workletNode.port.onmessage=({data})=>{
+    if(data.ended){workletNode.disconnect(); audioCtx.suspend(); pauseBtn.disabled=true;}
+  };
+
   await audioCtx.resume();
-  // UI 更新: 再生ボタン無効化、ポーズボタン有効化
-  playBtn.disabled  = true;
-  pauseBtn.disabled = false;
-
-  // 9. ポーズ／再開ボタンの動作切り替え
-  pauseBtn.addEventListener('click', async () => {
-    if (audioCtx.state === 'running') {
-      // 再生中 → 一時停止
-      await audioCtx.suspend();
-      pauseBtn.textContent = '▶️ 再開';
-    } else if (audioCtx.state === 'suspended') {
-      // 停止中 → 再開
-      await audioCtx.resume();
-      pauseBtn.textContent = '⏸️ ポーズ';
-    }
-  });
-
-  // 10. Worklet から再生終了通知を受信したら停止処理
-  node.port.onmessage = ({ data }) => {
-    if (data.ended) {
-      node.disconnect();        // Processor ノード切断
-      audioCtx.suspend();       // AudioContext を停止
-      pauseBtn.disabled = true; // ポーズボタンを無効化
-    }
-  };
 });

@@ -1,27 +1,95 @@
-<!-- public/index.html -->
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <title>Loop Demo</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Torii 3D Scroll + AudioWorklet Music Transition</title>
+  <style>
+    /* ---- リセット ---- */
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body {
+      min-height: 100%;
+      overflow-x: hidden;
+      overflow-y: hidden; /* 初期はスクロール禁止 */
+      background: #000;
+      color: #fff;
+      font-family: sans-serif;
+    }
+
+    /* ---- 3D シーン ---- */
+    #scene { position: fixed; inset: 0; perspective: 1200px; overflow: hidden; }
+    #world { position: absolute; inset: 0; transform-style: preserve-3d; will-change: transform; }
+    [data-z] {
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%) translateZ(var(--tz));
+      transform-style: preserve-3d;
+    }
+
+    /* ---- テキストスライド ---- */
+    .slide { width:500px; max-width:85vw; padding:2rem; background:rgba(255,255,255,0.1); border-radius:1rem; backdrop-filter:blur(4px); font-size:clamp(1rem,2vw,1.2rem); line-height:1.4; }
+    .side-left { transform: translate(-50%,-50%) translateX(-440px) translateZ(var(--tz)) rotateY(90deg); text-align:right; }
+    .side-right{ transform: translate(-50%,-50%) translateX(440px) translateZ(var(--tz)) rotateY(-90deg); text-align:left; }
+
+    /* ---- 鳥居 ---- */
+    .torii { width:600px; height:450px; pointer-events:none; }
+    .pillar { position:absolute; bottom:0; width:45px; height:400px; background:#c41717; border-radius:8px; }
+    .pillar.left { left:0; }
+    .pillar.right{ right:0; }
+    .caps{ position:absolute; left:-80px; right:-80px; top:-20px; height:28px; background:#c41717; border-radius:14px; }
+    .lintel{ position:absolute; left:-60px; right:-60px; top:0; height:55px; background:#c41717; border-radius:10px; }
+    .nuki { position:absolute; left:50px; right:50px; top:140px; height:25px; background:#681010; border-radius:8px; }
+
+    /* ---- 山 ---- */
+    .mountain{ width:0; height:0; border-left:900px solid transparent; border-right:900px solid transparent; border-bottom:650px solid #1b3a3f; transform-origin:center bottom; filter:drop-shadow(0 0 30px #0e2023); }
+    .mountain::after{ content:""; position:absolute; left:-150px; bottom:-650px; border-left:300px solid transparent; border-right:300px solid transparent; border-bottom:220px solid rgba(255,255,255,0.8); }
+
+    /* ---- 星 ---- */
+    #stars{ position:relative; width:100%; height:100%; }
+    .star{ position:absolute; width:2px; height:2px; background:#fff8; border-radius:50%; animation:twinkle 3s alternate infinite; }
+    @keyframes twinkle{ from{ opacity:0.2; } to{ opacity:1; } }
+
+    /* ---- オーディオコントロール ---- */
+    #audio-controls{ position:fixed; bottom:1rem; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.5); padding:0.5rem 1rem; border-radius:0.5rem; display:flex; gap:0.5rem; align-items:center; z-index:10; }
+    #audio-controls button, #audio-controls input[type="range"]{ background:#fff; border:none; border-radius:0.25rem; padding:0.25rem; }
+
+    /* ---- モーダル ---- */
+    #start-modal{ position:fixed; inset:0; background:rgba(0,0,0,0.9); display:flex; justify-content:center; align-items:center; z-index:20; }
+    #start-modal button{ font-size:1.5rem; padding:1rem 2rem; border:none; border-radius:0.5rem; background:#fff; color:#000; cursor:pointer; }
+  </style>
 </head>
 <body>
-  <!-- ページタイトル -->
-  <h1>AudioWorklet + サンプル単位ループ + ボリューム & ポーズ</h1>
-  <p>チェックボックスで切り替え、ボタンで再生開始／ポーズ：</p>
-  <!-- 切り替え用チェックボックス -->
-  <label>
-    <input type="checkbox" id="toggle"> 02へ遷移
-  </label>
-  <!-- 再生／開始ボタン -->
-  <button id="play">▶️ 再生開始</button>
-  <!-- ボリューム調整用スライダー -->
-  <label for="volume">🔊 ボリューム</label>
-  <input type="range" id="volume" min="0" max="1" step="0.01" value="1">
-  <!-- ポーズ／再開ボタン -->
-  <button id="pause" disabled>⏸️ ポーズ</button>
+  <!-- モーダル: タッチで開始（再生開始トリガー） -->
+  <div id="start-modal">
+    <button id="start-button">Touch to Start</button>
+  </div>
 
-  <!-- メインスクリプト読み込み (モジュール化) -->
+  <!-- 3D シーン -->
+  <div id="scene">
+    <div id="world">
+      <div class="torii" data-z="-1200">
+        <div class="pillar left"></div>
+        <div class="pillar right"></div>
+        <div class="caps"></div>
+        <div class="lintel"></div>
+        <div class="nuki"></div>
+      </div>
+      <section class="slide side-left" data-z="0">ようこそ<br><small>スクロールして鳥居をくぐってください</small></section>
+      <section class="slide side-right" data-z="-3000">山が見えてきます<br><small>さらにスクロール</small></section>
+      <div class="mountain" data-z="-5500"></div>
+      <div id="stars"></div>
+    </div>
+  </div>
+  <div style="height:6000px;"></div>
+
+  <!-- オーディオコントロール -->
+  <div id="audio-controls">
+    <button id="pause" disabled>⏸️ ポーズ</button>
+    <label>🔊<input type="range" id="volume" min="0" max="1" step="0.01" value="1"></label>
+  </div>
+
+  <!-- main.js を読み込み -->
   <script type="module" src="./main.js"></script>
 </body>
 </html>
