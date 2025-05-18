@@ -1,3 +1,4 @@
+<!-- public/index.html -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -5,12 +6,18 @@
   <title>Loop Demo</title>
 </head>
 <body>
-  <h1>AudioWorklet + サンプル単位ループ</h1>
-  <p>チェックボックスで切り替え、ボタンで再生開始：</p>
+  <h1>AudioWorklet + サンプル単位ループ + ボリューム & ポーズ</h1>
+  <p>チェックボックスで切り替え、ボタンで再生開始／ポーズ：</p>
   <label>
     <input type="checkbox" id="toggle"> 02へ遷移
   </label>
   <button id="play">▶️ 再生開始</button>
+  <!-- ボリューム調整用スライダー -->
+  <label for="volume">🔊 ボリューム</label>
+  <input type="range" id="volume" min="0" max="1" step="0.01" value="1">
+  <!-- ポーズ／再開ボタン -->
+  <button id="pause" disabled>⏸️ ポーズ</button>
+
   <script type="module" src="./main.js"></script>
 </body>
 </html>
