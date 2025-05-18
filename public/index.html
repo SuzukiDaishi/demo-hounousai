@@ -6,11 +6,14 @@
   <title>Loop Demo</title>
 </head>
 <body>
+  <!-- ページタイトル -->
   <h1>AudioWorklet + サンプル単位ループ + ボリューム & ポーズ</h1>
   <p>チェックボックスで切り替え、ボタンで再生開始／ポーズ：</p>
+  <!-- 切り替え用チェックボックス -->
   <label>
     <input type="checkbox" id="toggle"> 02へ遷移
   </label>
+  <!-- 再生／開始ボタン -->
   <button id="play">▶️ 再生開始</button>
   <!-- ボリューム調整用スライダー -->
   <label for="volume">🔊 ボリューム</label>
@@ -18,6 +21,7 @@
   <!-- ポーズ／再開ボタン -->
   <button id="pause" disabled>⏸️ ポーズ</button>
 
+  <!-- メインスクリプト読み込み (モジュール化) -->
   <script type="module" src="./main.js"></script>
 </body>
 </html>
